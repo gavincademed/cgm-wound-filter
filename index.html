@@ -169,7 +169,7 @@
   <p class="hint">Every chart gets a plain answer: YES with a ready-to-download prefilled form, or NOT A CANDIDATE with the reason. Copy CSV pastes the whole table into the tracker sheet.</p>
   <table id="resultsTable">
     <thead><tr>
-      <th></th><th>Patient</th><th>DOB</th><th>Answer</th><th>Evidence</th><th>Payer</th><th>Form</th>
+      <th></th><th>Patient</th><th>DOB</th><th>Answer</th><th>Evidence</th><th>Payer</th><th>Provider / action</th>
     </tr></thead>
     <tbody id="resultsBody"></tbody>
   </table>
@@ -177,6 +177,7 @@
   <div class="btnrow">
     <button class="btn-primary" id="formsBtn" disabled>Generate order forms</button>
     <button class="btn-ghost" id="csvBtn" disabled>Copy CSV for tracker</button>
+    <button class="btn-sand" id="cgmLeadsBtn" disabled>Copy CGM leads for Gregg</button>
     <span class="prog" id="formMsg" aria-live="polite"></span>
   </div>
   <div class="notice"><b>The clinical decision stays with the provider.</b> The generated WSR-01 prefills patient info and the matching clinical indication only. The recommendation language stays exactly as approved, and the provider name, credentials, signature, and date print blank for the wound provider.</div>
@@ -291,7 +292,7 @@ function renderQueue2(){
     <td><input type="checkbox" ${q.done?'checked':''} onchange="qrows[${i}].done=this.checked;renderQueue2()" aria-label="Mark ${esc(q.name)} worked"></td>
     <td class="nm">${esc(q.name)}</td>
     <td class="mono">${esc(q.date)}</td>
-    <td>${q.result?`<span class="v ${q.result==='YES'?'v-EL':'v-NO'}">${q.result==='YES'?'YES':'NOT A CANDIDATE'}</span>`:'<span class="mono">pending</span>'}</td>
+    <td>${q.result?`<span class="v ${q.result==='YES'?'v-EL':q.result==='CGM'?'v-LI':'v-NO'}">${q.result==='YES'?'YES':q.result==='CGM'?'ALREADY ON CGM':'NOT A CANDIDATE'}</span>`:'<span class="mono">pending</span>'}</td>
     <td><button class="btn-ghost rowbtn" onclick="copyName(${i}, this)">Copy name</button></td>
   </tr>`).join('');
 }
@@ -325,7 +326,7 @@ function tagQueue(result){
   for(const q of qrows){
     const qn = normName(q.name);
     if(qn && (qn.includes(rn) || rn.includes(qn))){
-      q.result = (result.verdict==='ELIGIBLE'||result.verdict==='LIKELY') ? 'YES' : 'NO';
+      q.result = result.verdict==='ON_CGM' ? 'CGM' : ((result.verdict==='ELIGIBLE'||result.verdict==='LIKELY') ? 'YES' : 'NO');
     }
   }
   renderQueue2();
@@ -370,9 +371,10 @@ Verdict rules:
 - ELIGIBLE: diabetes diagnosis AND insulin use, OR diabetes diagnosis AND documented problematic hypoglycemia
 - LIKELY: diabetes diagnosis present but insulin status unclear or on non-insulin agents only (needs one confirming data point from the PCP)
 - WATCH: prediabetes or glucose abnormality without a diabetes diagnosis
-- NOT_ELIGIBLE: no diabetic signal anywhere in the chart, OR the patient already uses a CGM (this program only targets patients not currently on a CGM)
+- ON_CGM: the patient already uses a CGM (any evidence: device named like Dexcom or Libre, CGM in med or DME lists, sensor readings referenced). This outranks every other verdict.
+- NOT_ELIGIBLE: no diabetic signal anywhere in the chart
 
-Also determine: whether the patient already uses a CGM (on_cgm), and which clinical indication best matches the wound context (single best fit from the allowed values, based on wound type plus diabetes status).
+Also determine: whether the patient already uses a CGM (on_cgm; if YES also capture cgm_device like Dexcom G7 or FreeStyle Libre 3 and cgm_supplier if the chart names who supplies it, else empty), and which clinical indication best matches the wound context (single best fit from the allowed values, based on wound type plus diabetes status).
 
 Also extract demographics for order form prefill. Use empty string for anything not found. Never guess or fabricate a value.
 
@@ -396,7 +398,9 @@ Respond with ONLY a JSON object, no markdown fences, no preamble:
  "a1c":"",
  "on_cgm":"YES|NO",
  "indication":"Diabetic Foot Ulcer|Pressure Injury with Diabetes|Venous Ulcer with Diabetes|Surgical Wound with Diabetes|Delayed Healing Potentially Impacted by Diabetes|Recurrent Wounds|Poor Glycemic Control Suspected|Other",
- "verdict":"ELIGIBLE|LIKELY|WATCH|NOT_ELIGIBLE",
+ "cgm_device":"",
+ "cgm_supplier":"",
+ "verdict":"ELIGIBLE|LIKELY|WATCH|NOT_ELIGIBLE|ON_CGM",
  "evidence":"one sentence citing the chart facts that drove the verdict"
 }`;
 
@@ -463,6 +467,7 @@ $('screenBtn').onclick = async () => {
 const VMAP = {
   ELIGIBLE:      {label:'YES', cls:'v-EL', note:'Candidate'},
   LIKELY:        {label:'YES', cls:'v-LI', note:'Candidate, PCP to confirm insulin status'},
+  ON_CGM:        {label:'ALREADY ON CGM', cls:'v-LI', note:''},
   WATCH:         {label:'NOT A CANDIDATE', cls:'v-WA', note:'Watch list'},
   NOT_ELIGIBLE:  {label:'NOT A CANDIDATE', cls:'v-NO', note:''}
 };
@@ -471,20 +476,60 @@ function renderResults(){
   $('resultsBody').innerHTML = results.map((r,i)=>{
     const v = VMAP[r.verdict] || VMAP.WATCH;
     const yes = r.verdict==='ELIGIBLE'||r.verdict==='LIKELY';
+    const cgm = r.verdict==='ON_CGM';
+    let action = '<span class="mono">No form</span>';
+    if(yes) action = `<button class="btn-primary rowbtn" onclick="downloadOne(${i})">Download form</button>`;
+    if(cgm) action = `<button class="btn-sand rowbtn" onclick="emailGavin(${i})">Email Gavin</button>`;
+    const note = cgm ? [r.cgm_device, r.cgm_supplier?('via '+r.cgm_supplier):''].filter(Boolean).join(' ') : v.note;
     return `<tr>
       <td>${yes?`<input type="checkbox" data-i="${i}" checked aria-label="Include ${esc(r.patient_name)} in batch">`:''}</td>
       <td><span class="nm">${esc(r.patient_name)}</span><br><span class="mono">${esc(r.source_file)}</span></td>
       <td class="mono">${esc(r.dob)}</td>
-      <td><span class="v ${v.cls}">${v.label}</span><br><span class="mono">${esc(v.note)}</span></td>
+      <td><span class="v ${v.cls}">${v.label}</span><br><span class="mono">${esc(note)}</span></td>
       <td class="ev">${esc(r.evidence)}</td>
       <td class="mono">${esc(r.primary_insurance)}</td>
-      <td>${yes?`<button class="btn-primary rowbtn" onclick="downloadOne(${i})">Download form</button>`:'<span class="mono">No form</span>'}</td>
+      <td class="mono">${esc(r.provider_name)}${r.provider_fax?('<br>fax '+esc(r.provider_fax)):''}<br>${action}</td>
     </tr>`;
   }).join('');
   const any = results.some(r=>r.verdict==='ELIGIBLE'||r.verdict==='LIKELY');
   $('formsBtn').disabled = !any;
   $('csvBtn').disabled = !results.length;
+  $('cgmLeadsBtn').disabled = !results.some(r=>r.verdict==='ON_CGM');
 }
+
+$('cgmLeadsBtn').onclick = () => {
+  const leads = results.filter(r=>r.verdict==='ON_CGM');
+  const cols = ['patient_name','dob','cgm_device','cgm_supplier','provider_name','provider_npi','provider_phone','provider_fax','primary_insurance','evidence','source_file'];
+  const head = ['Patient','DOB','Device','Current supplier','Provider','NPI','Provider phone','Provider fax','Payer','Evidence','Source file','Date found','Gregg status','Notes'];
+  const today = new Date().toLocaleDateString('en-US');
+  const rows = leads.map(r=>cols.map(c=>String(r[c]??'').replace(/\t|\n/g,' ')).concat([today,'','']).join('\t'));
+  navigator.clipboard.writeText([head.join('\t')].concat(rows).join('\n'));
+  $('formMsg').textContent = leads.length+' CGM lead'+(leads.length===1?'':'s')+' copied. Paste into the CGM Leads tab.';
+};
+
+window.emailGavin = i => {
+  const r = results[i];
+  const subject = 'CGM already in place: '+(r.patient_name||'unknown patient');
+  const body = [
+    'Hey Gavin,',
+    '',
+    'I was scrubbing the wound queue and this patient already has a CGM.',
+    '',
+    'Patient: '+(r.patient_name||''),
+    'DOB: '+(r.dob||''),
+    'Device: '+(r.cgm_device||'not named in chart'),
+    'Current supplier: '+(r.cgm_supplier||'not named in chart'),
+    'Provider: '+(r.provider_name||'')+(r.provider_npi?(' (NPI '+r.provider_npi+')'):''),
+    'Provider phone: '+(r.provider_phone||''),
+    'Provider fax: '+(r.provider_fax||''),
+    'Payer: '+(r.primary_insurance||''),
+    'Evidence: '+(r.evidence||''),
+    'Source file: '+(r.source_file||''),
+    '',
+    'Sazan'
+  ].join('\n');
+  location.href = 'mailto:Gavin@cademed.com?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+};
 
 window.downloadOne = async i => {
   const r = results[i];
@@ -497,7 +542,7 @@ window.downloadOne = async i => {
 };
 
 $('csvBtn').onclick = () => {
-  const cols = ['patient_name','dob','verdict','evidence','diabetes_type','insulin','hypoglycemia','a1c','primary_insurance','primary_id','secondary_insurance','secondary_id','provider_name','provider_npi','provider_phone','provider_fax','address','phone','source_file'];
+  const cols = ['patient_name','dob','verdict','evidence','diabetes_type','insulin','hypoglycemia','a1c','primary_insurance','primary_id','secondary_insurance','secondary_id','cgm_device','cgm_supplier','provider_name','provider_npi','provider_phone','provider_fax','address','phone','source_file'];
   const csv = [cols.join('\t')].concat(results.map(r=>cols.map(c=>String(r[c]??'').replace(/\t|\n/g,' ')).join('\t'))).join('\n');
   navigator.clipboard.writeText(csv);
   $('formMsg').textContent = 'Copied. Paste into the tracker sheet.';
