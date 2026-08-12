@@ -292,9 +292,32 @@ function renderQueue2(){
     <td class="nm">${esc(q.name)}</td>
     <td class="mono">${esc(q.date)}</td>
     <td>${q.result?`<span class="v ${q.result==='YES'?'v-EL':'v-NO'}">${q.result==='YES'?'YES':'NOT A CANDIDATE'}</span>`:'<span class="mono">pending</span>'}</td>
-    <td><button class="btn-ghost rowbtn" onclick="navigator.clipboard.writeText(${JSON.stringify('')}+qrows[${i}].name);this.textContent='Copied'">Copy name</button></td>
+    <td><button class="btn-ghost rowbtn" onclick="copyName(${i}, this)">Copy name</button></td>
   </tr>`).join('');
 }
+
+window.copyName = async (i, btn) => {
+  const name = qrows[i].name;
+  let ok = false;
+  try{ await navigator.clipboard.writeText(name); ok = true; }
+  catch(e){
+    /* fallback for contexts where the clipboard API is blocked */
+    const ta = document.createElement('textarea');
+    ta.value = name; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    try{ ok = document.execCommand('copy'); }catch(e2){ ok = false; }
+    document.body.removeChild(ta);
+  }
+  btn.textContent = ok ? 'Copied' : 'Select + copy:';
+  if(!ok){
+    /* last resort: show the name selected next to the button */
+    const span = document.createElement('input');
+    span.value = name; span.readOnly = true;
+    span.style.cssText = 'margin-left:8px;font-family:monospace;font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;width:180px';
+    btn.after(span); span.focus(); span.select();
+  }
+  setTimeout(()=>{ btn.textContent='Copy name'; }, 1800);
+};
 
 function tagQueue(result){
   const rn = normName(result.patient_name);
