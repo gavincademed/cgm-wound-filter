@@ -123,6 +123,23 @@
   </div>
 </section>
 
+<section class="card hide" id="queueCard">
+  <h2>Today's queue</h2>
+  <p class="hint">The prior day's new wound patients, pulled live from the tracker sheet. Look each one up in Brightree, pull their notes, and drop them below. Check off a row as you finish it. Checkmarks live in this tab only; the sheet stays the system of record.</p>
+  <div class="btnrow" style="margin-top:0">
+    <button class="btn-ghost" id="loadQueueBtn">Load queue from sheet</button>
+    <span class="prog" id="queueMsg"></span>
+  </div>
+  <table id="queueTable" class="hide">
+    <thead><tr><th>Done</th><th>Patient</th><th>Create date</th><th>Screen result</th><th></th></tr></thead>
+    <tbody id="queueBody"></tbody>
+  </table>
+  <details style="margin-top:14px"><summary style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--aside);cursor:pointer">Sheet not shared? Paste the queue instead</summary>
+    <textarea id="queuePaste" rows="4" style="width:100%;margin-top:10px;background:var(--soft-white);border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-family:'JetBrains Mono',monospace;font-size:12px" placeholder="Paste the patient name column (one per line, dates optional after a tab)"></textarea>
+    <div class="btnrow"><button class="btn-ghost" id="queuePasteBtn">Use pasted queue</button></div>
+  </details>
+</section>
+
 <section class="card hide" id="uploadCard">
   <h2>Upload charts</h2>
   <p class="hint">Drop the batch of medical note PDFs. One file per patient works best. Files are read in this tab and sent only to the Anthropic API.</p>
@@ -202,8 +219,73 @@ $('startBtn').onclick = async () => {
   if($('apikey')) $('apikey').value=''; $('sitepass').value='';
   $('sessionCard').classList.add('hide');
   $('uploadCard').classList.remove('hide');
+  $('queueCard').classList.remove('hide');
+  loadQueue();
   setPhase(1);
 };
+
+/* QUEUE */
+const SHEET_ID = '1sBLuBJEPAFnpNxxuwiJQI-Um80LU6QfG8z4VUmEoPvk';
+const SHEET_GID = '295723216';
+let qrows = []; // {name, date, done, result}
+
+function normName(s){ return String(s||'').toUpperCase().replace(/[^A-Z]/g,''); }
+
+async function loadQueue(){
+  $('queueMsg').textContent = 'Loading queue...';
+  try{
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${SHEET_GID}`;
+    const resp = await fetch(url);
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const txt = await resp.text();
+    const json = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}')+1));
+    const cols = json.table.cols.map(c=>(c.label||'').toLowerCase());
+    let nameIdx = cols.findIndex(c=>/patient|name/.test(c));
+    let dateIdx = cols.findIndex(c=>/date/.test(c));
+    if(nameIdx<0) nameIdx = 0;
+    qrows = json.table.rows.map(row=>{
+      const cell = i => (i>=0 && row.c[i]) ? (row.c[i].f ?? row.c[i].v ?? '') : '';
+      return {name:String(cell(nameIdx)).trim(), date:String(cell(dateIdx)).trim(), done:false, result:''};
+    }).filter(r=>r.name && !/patient|name/i.test(r.name));
+    renderQueue2();
+    $('queueMsg').textContent = qrows.length + ' patients in the queue.';
+  }catch(e){
+    $('queueMsg').textContent = 'Could not reach the sheet (it may be private). Use the paste option below.';
+  }
+}
+$('loadQueueBtn').onclick = loadQueue;
+
+$('queuePasteBtn').onclick = () => {
+  qrows = $('queuePaste').value.split(/\n/).map(l=>{
+    const parts = l.split(/\t/);
+    return {name:(parts[0]||'').trim(), date:(parts[1]||'').trim(), done:false, result:''};
+  }).filter(r=>r.name);
+  renderQueue2();
+  $('queueMsg').textContent = qrows.length + ' patients loaded from paste.';
+};
+
+function renderQueue2(){
+  $('queueTable').classList.toggle('hide', !qrows.length);
+  $('queueBody').innerHTML = qrows.map((q,i)=>`<tr style="${q.done?'opacity:.45':''}">
+    <td><input type="checkbox" ${q.done?'checked':''} onchange="qrows[${i}].done=this.checked;renderQueue2()" aria-label="Mark ${esc(q.name)} worked"></td>
+    <td class="nm">${esc(q.name)}</td>
+    <td class="mono">${esc(q.date)}</td>
+    <td>${q.result?`<span class="v ${q.result==='YES'?'v-EL':'v-NO'}">${q.result==='YES'?'YES':'NOT A CANDIDATE'}</span>`:'<span class="mono">pending</span>'}</td>
+    <td><button class="btn-ghost rowbtn" onclick="navigator.clipboard.writeText(${JSON.stringify('')}+qrows[${i}].name);this.textContent='Copied'">Copy name</button></td>
+  </tr>`).join('');
+}
+
+function tagQueue(result){
+  const rn = normName(result.patient_name);
+  if(!rn) return;
+  for(const q of qrows){
+    const qn = normName(q.name);
+    if(qn && (qn.includes(rn) || rn.includes(qn))){
+      q.result = (result.verdict==='ELIGIBLE'||result.verdict==='LIKELY') ? 'YES' : 'NO';
+    }
+  }
+  renderQueue2();
+}
 
 /* UPLOAD */
 const drop = $('drop'), fileInput = $('fileInput');
@@ -322,6 +404,7 @@ $('screenBtn').onclick = async () => {
       const r = await screenFile(item);
       results.push(r);
       item.status = r.verdict;
+      tagQueue(r);
     }catch(e){
       item.status = 'error: '+e.message;
     }
