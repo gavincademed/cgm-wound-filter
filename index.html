@@ -178,6 +178,7 @@
     <button class="btn-primary" id="formsBtn" disabled>Generate order forms</button>
     <button class="btn-ghost" id="csvBtn" disabled>Copy CSV for tracker</button>
     <button class="btn-sand" id="cgmLeadsBtn" disabled>Copy CGM leads for Gregg</button>
+    <button class="btn-primary" id="emailBatchBtn" disabled>Email batch to Gavin</button>
     <span class="prog" id="formMsg" aria-live="polite"></span>
   </div>
   <div class="notice"><b>The clinical decision stays with the provider.</b> The generated WSR-01 prefills patient info and the matching clinical indication only. The recommendation language stays exactly as approved, and the provider name, credentials, signature, and date print blank for the wound provider.</div>
@@ -397,7 +398,7 @@ Respond with ONLY a JSON object, no markdown fences, no preamble:
  "hypoglycemia":"YES|NO",
  "a1c":"",
  "on_cgm":"YES|NO",
- "indication":"Diabetic Foot Ulcer|Pressure Injury with Diabetes|Venous Ulcer with Diabetes|Surgical Wound with Diabetes|Delayed Healing Potentially Impacted by Diabetes|Recurrent Wounds|Poor Glycemic Control Suspected|Other",
+ "indication":"Diabetic Foot Ulcer|Pressure Injury with Diabetes|Neuropathic or Charcot Ulcer|Arterial or Ischemic Ulcer with Diabetes|Venous Ulcer with Diabetes|Surgical Wound with Diabetes|Amputation Site or Post-Amputation Wound|Osteomyelitis or Deep Infection with Diabetes|Delayed Healing Potentially Impacted by Diabetes|Recurrent Wounds|Poor Glycemic Control Suspected|Other",
  "cgm_device":"",
  "cgm_supplier":"",
  "verdict":"ELIGIBLE|LIKELY|WATCH|NOT_ELIGIBLE|ON_CGM",
@@ -495,7 +496,28 @@ function renderResults(){
   $('formsBtn').disabled = !any;
   $('csvBtn').disabled = !results.length;
   $('cgmLeadsBtn').disabled = !results.some(r=>r.verdict==='ON_CGM');
+  $('emailBatchBtn').disabled = !results.length;
 }
+
+$('emailBatchBtn').onclick = () => {
+  const today = new Date().toLocaleDateString('en-US');
+  const yes = results.filter(r=>r.verdict==='ELIGIBLE'||r.verdict==='LIKELY');
+  const cgm = results.filter(r=>r.verdict==='ON_CGM');
+  const no  = results.filter(r=>r.verdict==='WATCH'||r.verdict==='NOT_ELIGIBLE');
+  const line = r => '- '+(r.patient_name||'?')+' (DOB '+(r.dob||'?')+', '+(r.primary_insurance||'?')+') '
+    + (r.provider_name?('Provider: '+r.provider_name+'. '):'')
+    + String(r.evidence||'').slice(0,110);
+  const parts = ['Hey Gavin,','','CGM screening batch for '+today+'. '
+    + yes.length+' yes, '+cgm.length+' already on CGM, '+no.length+' not candidates.',''];
+  if(yes.length){ parts.push('YES ('+yes.length+'):'); yes.forEach(r=>parts.push(line(r))); parts.push(''); }
+  if(cgm.length){ parts.push('ALREADY ON CGM ('+cgm.length+'):'); cgm.forEach(r=>parts.push('- '+(r.patient_name||'?')+' '+(r.cgm_device||'')+' '+(r.cgm_supplier?('via '+r.cgm_supplier):'')+' Provider: '+(r.provider_name||'?'))); parts.push(''); }
+  if(no.length){ parts.push('NOT CANDIDATES ('+no.length+'):'); no.forEach(r=>parts.push('- '+(r.patient_name||'?')+': '+String(r.evidence||'').slice(0,80))); parts.push(''); }
+  parts.push('Forms for the yes patients are in the folder.','','Sazan');
+  let body = parts.join('\n');
+  if(body.length > 1900) body = body.slice(0,1860)+'\n[trimmed, full detail in the tracker]';
+  const subject = 'CGM screening batch '+today+': '+yes.length+' yes, '+cgm.length+' on CGM';
+  location.href = 'mailto:Gavin@cademed.com?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+};
 
 $('cgmLeadsBtn').onclick = () => {
   const leads = results.filter(r=>r.verdict==='ON_CGM');
@@ -593,10 +615,10 @@ async function buildOrderForm(r){
   rt('DIABETIC CARE & CGM COORDINATION',44,bold,9.5,blue);
   rt('Phone: 844.633.6287  |  Fax: 808.356.0309',58,helv,9,gray);
   rt('cademed.com  ·  Serving the Hawaiian Islands',71,helv,9,gray);
-  y-=104;
+  y-=98;
 
   pg.drawText('WOUND SPECIALIST CGM RECOMMENDATION',{x:L,y:y,size:18.5,font:bold,color:dark});
-  y-=26;
+  y-=22;
 
   const section = (num,label,bg)=>{
     pg.drawRectangle({x:L,y:y-5,width:R-L,height:20,color:bg});
@@ -620,8 +642,8 @@ async function buildOrderForm(r){
 
   /* Section 2 */
   section(2,'CLINICAL INDICATION',dark);
-  const leftOpts=['Diabetic Foot Ulcer','Pressure Injury with Diabetes','Delayed Healing Potentially Impacted by Diabetes','Poor Glycemic Control Suspected'];
-  const rightOpts=['Venous Ulcer with Diabetes','Surgical Wound with Diabetes','Recurrent Wounds','Other:'];
+  const leftOpts=['Diabetic Foot Ulcer','Pressure Injury with Diabetes','Neuropathic or Charcot Ulcer','Arterial or Ischemic Ulcer with Diabetes','Delayed Healing Potentially Impacted by Diabetes','Poor Glycemic Control Suspected'];
+  const rightOpts=['Venous Ulcer with Diabetes','Surgical Wound with Diabetes','Amputation Site or Post-Amputation Wound','Osteomyelitis or Deep Infection with Diabetes','Recurrent Wounds','Other:'];
   const cb=(x,yy,label,checked)=>{
     pg.drawRectangle({x:x,y:yy-3,width:11,height:11,borderColor:gray,borderWidth:1,color:rgb(1,1,1)});
     if(checked){ pg.drawLine({start:{x:x+2,y:yy+2.5},end:{x:x+4.5,y:yy-1},thickness:1.5,color:blue});
@@ -631,12 +653,12 @@ async function buildOrderForm(r){
     if(label==='Other:') pg.drawLine({start:{x:x+54,y:yy-2},end:{x:x+226,y:yy-2},thickness:.7,color:gray});
     return ls.length;
   };
-  for(let i=0;i<4;i++){
+  for(let i=0;i<6;i++){
     let used=1;
     used=Math.max(used,cb(L, y, leftOpts[i], r.indication===leftOpts[i]));
     const isOther = rightOpts[i]==='Other:';
     used=Math.max(used,cb(L+266, y, rightOpts[i], isOther ? r.indication==='Other' : r.indication===rightOpts[i]));
-    y-=12*used+9;
+    y-=12*used+7;
   }
   /* banner */
   pg.drawRectangle({x:L,y:y-6,width:R-L,height:22,color:light});
@@ -645,7 +667,7 @@ async function buildOrderForm(r){
   pg.drawText('Patient is ',{x:bx,y:y,size:10,font:helv,color:dark}); bx+=helv.widthOfTextAtSize('Patient is ',10);
   pg.drawText('not',{x:bx,y:y,size:10,font:bold,color:dark}); bx+=bold.widthOfTextAtSize('not',10);
   pg.drawText(' currently utilizing a Continuous Glucose Monitor',{x:bx,y:y,size:10,font:helv,color:dark});
-  y-=42;
+  y-=36;
 
   /* Section 3 */
   section(3,'PROVIDER RECOMMENDATION',blue);
@@ -654,7 +676,7 @@ async function buildOrderForm(r){
     ["I recommend evaluation by the patient's primary care provider or diabetes-managing provider, including consideration of Continuous Glucose Monitoring (CGM) as clinically appropriate. ",bold],
     ["I request CADE Medical's assistance in coordinating this evaluation, as this patient is already receiving wound supplies from this local DME supplier.",helv]
   ];
-  let cx=L; const lineH=15, maxW=R-L;
+  let cx=L; const lineH=14, maxW=R-L;
   for(const [txt,font] of segs){
     for(const word of txt.split(/\s+/).filter(Boolean)){
       const wdt = font.widthOfTextAtSize(word+' ',10.5);
@@ -664,23 +686,23 @@ async function buildOrderForm(r){
       cx+=wdt;
     }
   }
-  y-=lineH+18;
+  y-=lineH+12;
 
   f1('PROVIDER NAME (PRINTED)','',L,150);
   f1('CREDENTIALS','',L+166,90);
   f1('PROVIDER SIGNATURE','',L+272,150);
   f1('DATE','',L+438,66);
-  y-=46;
+  y-=40;
 
   /* Why refer box */
-  const boxH=108;
+  const boxH=96;
   pg.drawRectangle({x:L,y:y-boxH,width:R-L,height:boxH,borderColor:rgb(.85,.87,.9),borderWidth:1,color:rgb(1,1,1)});
   pg.drawRectangle({x:L,y:y-boxH,width:3,height:boxH,color:blue});
   pg.drawText('WHY REFER CGM EVALUATION TO CADE',{x:L+14,y:y-20,size:8.5,font:bold,color:aqua});
   const body='CADE Medical supplies both major CGM platforms, including the current-generation Abbott FreeStyle Libre and Dexcom G7 systems, so the diabetes-managing provider can order the sensor that fits the patient rather than the one a supplier happens to carry. CADE will verify benefits, handle authorization, coordinate directly with the ordering provider, and handle the documentation on the patient\u2019s behalf.';
   wrap(body,helv,9,352).forEach((ln,k)=>pg.drawText(ln,{x:L+14,y:y-36-k*12,size:9,font:helv,color:dark}));
   pg.drawText('FreeStyle Libre',{x:R-108,y:y-36,size:11,font:bold,color:dark});
-  pg.drawText('Dexcom G7',{x:R-108,y:y-80,size:11,font:bold,color:rgb(0.29,0.63,0.20)});
+  pg.drawText('Dexcom G7',{x:R-108,y:y-72,size:11,font:bold,color:rgb(0.29,0.63,0.20)});
   y-=boxH;
 
   /* Footer */
