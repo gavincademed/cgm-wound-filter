@@ -127,7 +127,8 @@
   <h2>Today's queue</h2>
   <p class="hint">The prior day's new wound patients, pulled live from the tracker sheet. Look each one up in Brightree, pull their notes, and drop them below. Check off a row as you finish it. Checkmarks live in this tab only; the sheet stays the system of record.</p>
   <div class="btnrow" style="margin-top:0">
-    <button class="btn-ghost" id="loadQueueBtn">Load queue from sheet</button>
+    <button class="btn-ghost" id="loadQueueBtn">Refresh queue</button>
+    <a href="https://docs.google.com/spreadsheets/d/1sBLuBJEPAFnpNxxuwiJQI-Um80LU6QfG8z4VUmEoPvk/edit?gid=295723216" target="_blank" rel="noopener" style="font-family:'Inter',sans-serif;font-weight:600;font-size:.95rem;color:var(--accent-ink);text-decoration:none;border:1px solid var(--lift);border-radius:10px;padding:12px 24px">Open tracker sheet</a>
     <span class="prog" id="queueMsg"></span>
   </div>
   <table id="queueTable" class="hide">
@@ -239,16 +240,29 @@ async function loadQueue(){
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     const txt = await resp.text();
     const json = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}')+1));
-    const cols = json.table.cols.map(c=>(c.label||'').toLowerCase());
-    let nameIdx = cols.findIndex(c=>/patient|name/.test(c));
-    let dateIdx = cols.findIndex(c=>/date/.test(c));
-    if(nameIdx<0) nameIdx = 0;
-    qrows = json.table.rows.map(row=>{
-      const cell = i => (i>=0 && row.c[i]) ? (row.c[i].f ?? row.c[i].v ?? '') : '';
-      return {name:String(cell(nameIdx)).trim(), date:String(cell(dateIdx)).trim(), done:false, result:''};
-    }).filter(r=>r.name && !/patient|name/i.test(r.name));
+    const grid = json.table.rows.map(row=>(row.c||[]).map(c=>c?String(c.f ?? c.v ?? '').trim():''));
+
+    /* find the header row anywhere in the sheet */
+    let nameIdx=-1, dateIdx=-1, headerRow=-1;
+    for(let ri=0; ri<Math.min(grid.length,30); ri++){
+      const ci = grid[ri].findIndex(v=>/patient\s*full\s*name/i.test(v));
+      if(ci>=0){ headerRow=ri; nameIdx=ci;
+        const di = grid[ri].findIndex(v=>/create\s*date/i.test(v));
+        dateIdx = di>=0?di:ci+1; break; }
+    }
+    if(headerRow<0) throw new Error('header not found');
+
+    qrows = grid.slice(headerRow+1)
+      .map(row=>({name:row[nameIdx]||'', date:(dateIdx>=0?row[dateIdx]:'')||'', done:false, result:''}))
+      .filter(r=>r.name);
+
+    /* newest create date first */
+    const dv = s=>{ const d=new Date(s); return isNaN(d)?0:d.getTime(); };
+    qrows.sort((a,b)=>dv(b.date)-dv(a.date));
+    const newest = qrows.length?qrows[0].date:'';
+    const nNew = qrows.filter(r=>r.date===newest).length;
     renderQueue2();
-    $('queueMsg').textContent = qrows.length + ' patients in the queue.';
+    $('queueMsg').textContent = qrows.length+' patients in the rolling queue, '+nNew+' from '+newest+' on top.';
   }catch(e){
     $('queueMsg').textContent = 'Could not reach the sheet (it may be private). Use the paste option below.';
   }
