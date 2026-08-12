@@ -40,6 +40,10 @@
   .phase div:last-child{border-right:0}
   .phase div.on{color:#FFFFFF;background:var(--deep);font-weight:700}
 
+  .workgrid{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:24px;align-items:start}
+  .workgrid .card{margin-top:24px}
+  #uploadCard{position:sticky;top:24px}
+  @media(max-width:960px){.workgrid{grid-template-columns:1fr}#uploadCard{position:static}}
   .card{background:var(--surface-card);border:1px solid var(--line);border-radius:18px;padding:28px 30px;margin-top:24px;box-shadow:var(--shadow-soft)}
   .card h2{font-weight:700;font-size:1.35rem;letter-spacing:-.022em;line-height:1.1;margin-bottom:6px}
   .card .hint{color:var(--ink-soft);font-size:.92rem;margin-bottom:16px}
@@ -123,6 +127,7 @@
   </div>
 </section>
 
+<div class="workgrid">
 <section class="card hide" id="queueCard">
   <h2>Today's queue</h2>
   <p class="hint">The prior day's new wound patients, pulled live from the tracker sheet. Look each one up in Brightree, pull their notes, and drop them below. Check off a row as you finish it. Checkmarks live in this tab only; the sheet stays the system of record.</p>
@@ -143,7 +148,7 @@
 
 <section class="card hide" id="uploadCard">
   <h2>Upload charts</h2>
-  <p class="hint">Drop the batch of medical note PDFs. One file per patient works best. Files are read in this tab and sent only to the Anthropic API.</p>
+  <p class="hint">Pull the notes for the patient you are working, drop them here. One file per patient works best.</p>
   <div class="drop" id="drop" tabindex="0" role="button" aria-label="Upload chart PDFs">
     <p class="big">Drop PDFs here or click to browse</p>
     <p>Medical notes · face-to-face · eval forms</p>
@@ -156,6 +161,8 @@
     <span class="prog" id="prog" aria-live="polite"></span>
   </div>
 </section>
+</div>
+
 
 <section class="card hide" id="resultsCard">
   <h2>Screening results</h2>
