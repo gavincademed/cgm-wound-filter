@@ -194,7 +194,7 @@ $('startBtn').onclick = async () => {
     if(!raw.startsWith('sk-ant-')){ $('sessionMsg').textContent='That does not look like an Anthropic key.'; return; }
     API_KEY = raw;
   }else if(pw){
-    if(SEALED_KEY==='sJPunv5691zdhyGk5OqD2HuFlpBL0w5EysoPA9lHPx84eUrvHK19DGAGolG1+eOW6bBeigCerZ08XqGgcUeEw2m5d/2mJ0IFjKL7Eu52BGUiZXNt4B/ljbuhCNXJVdxKj1SwUBZ+cLXAKZaxpXydr5C23/KqsAGWBueXm4is0QU+/lHedG4gO1LWNt6jlB/6fvtoYaNEiI8='){ $('sessionMsg').textContent='No sealed key installed yet. Admin: open key-seal.html, paste the result into SEALED_KEY.'; return; }
+    if(!SEALED_KEY || SEALED_KEY.length < 60){ $('sessionMsg').textContent='No sealed key installed yet. Admin: open key-seal.html, paste the result into SEALED_KEY.'; return; }
     try{ API_KEY = await unseal(pw, SEALED_KEY); }
     catch(e){ $('sessionMsg').textContent='Wrong password.'; return; }
     if(!API_KEY.startsWith('sk-ant-')){ API_KEY=null; $('sessionMsg').textContent='Wrong password.'; return; }
