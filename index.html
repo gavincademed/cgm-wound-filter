@@ -278,7 +278,7 @@ async function loadQueue(){
       if(ci>=0){ headerRow=ri; nameIdx=ci;
         const di = grid[ri].findIndex(v=>/create\s*date/i.test(v));
         dateIdx = di>=0?di:ci+1;
-        provIdx = grid[ri].findIndex(v=>/provider|doctor|physician|referr/i.test(v));
+        provIdx = grid[ri].findIndex(v=>/ordering|provider|doctor|physician|referr/i.test(v));
         break; }
     }
     if(headerRow<0) throw new Error('header not found');
@@ -325,7 +325,7 @@ async function loadProviders(){
       /* find a header row with a provider-ish column */
       let hRow=-1, pIdx=-1, nIdx=-1;
       for(let ri=0; ri<Math.min(grid.length,30); ri++){
-        const pi = grid[ri].findIndex(v=>/provider|physician|doctor|referr/i.test(v));
+        const pi = grid[ri].findIndex(v=>/ordering|provider|physician|doctor|referr/i.test(v));
         if(pi>=0){ hRow=ri; pIdx=pi;
           nIdx = grid[ri].findIndex(v=>/patient/i.test(v));
           if(nIdx<0) nIdx = grid[ri].findIndex(v=>/name/i.test(v));
@@ -416,6 +416,29 @@ window.copyName = async (i, btn) => {
   }
   setTimeout(()=>{ btn.textContent='Copy name'; }, 1800);
 };
+
+/* Strip trailing credentials so only the name prints on the form */
+function cleanProviderName(n){
+  let s = String(n||'').trim();
+  if(!s) return '';
+  const cred = /\s*[,;]?\s*\b(M\.?D\.?|D\.?O\.?|P\.?A\.?-?C?|A\.?P\.?R\.?N\.?-?(RX)?|N\.?P\.?|F\.?N\.?P\.?-?[BC]?|A\.?N\.?P\.?|C\.?N\.?P\.?|D\.?P\.?M\.?|R\.?N\.?|B\.?S\.?N\.?|M\.?S\.?N\.?|Ph\.?D\.?|D\.?N\.?P\.?)\b\.?\s*$/i;
+  let prev;
+  do { prev = s; s = s.replace(cred, '').trim().replace(/[,;]\s*$/, '').trim(); } while(s !== prev);
+  return s;
+}
+
+/* Ordering doctor from the sheet wins; chart value is the fallback */
+function providerForPatient(patientName){
+  const key = normName(patientName);
+  if(!key) return '';
+  if(PATPROV[key]) return PATPROV[key];
+  for(const k in PATPROV){ if(k && (k.includes(key) || key.includes(k))) return PATPROV[k]; }
+  for(const q of qrows){
+    const qn = normName(q.name);
+    if(q.provider && qn && (qn.includes(key) || key.includes(qn))) return q.provider;
+  }
+  return '';
+}
 
 function tagQueue(result){
   const rn = normName(result.patient_name);
@@ -548,7 +571,7 @@ $('screenBtn').onclick = async () => {
     $('prog').textContent = `Screening ${done+1} of ${todo.length}`;
     try{
       const r = await screenFile(item);
-      if(!String(r.provider_name||'').trim()) r.provider_name = providerForPatient(r.patient_name);
+      r.provider_name = cleanProviderName(providerForPatient(r.patient_name) || r.provider_name);
       provSeen(r.provider_name);
       results.push(r);
       item.status = r.verdict;
@@ -762,7 +785,7 @@ $('formsBtn').onclick = async () => {
 };
 
 async function buildOrderForm(r){
-  if(!String(r.provider_name||'').trim()) r.provider_name = providerForPatient(r.patient_name);
+  r.provider_name = cleanProviderName(providerForPatient(r.patient_name) || r.provider_name);
   const {PDFDocument, StandardFonts, rgb} = PDFLib;
   const doc = await PDFDocument.create();
   const pg = doc.addPage([612,792]);
