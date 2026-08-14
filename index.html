@@ -133,7 +133,7 @@
 <div class="workgrid">
 <section class="card hide" id="queueCard">
   <h2>Today's queue</h2>
-  <p class="hint">The prior day's new wound patients, pulled live from the tracker sheet. Click a patient name to open them in Brightree, pull their notes, and drop them below. Rows already marked in the sheet (Eligible or any PDF column filled) drop out of the list automatically. The checkbox holds your place during the day and is remembered on this machine; the sheet stays the system of record.</p>
+  <p class="hint">The prior day's new wound patients, pulled live from the tracker sheet. Look each one up in Brightree, pull their notes, and drop them below. Rows already marked in the sheet (Eligible or any PDF column filled) drop out of the list automatically. The checkbox holds your place during the day and is remembered on this machine; the sheet stays the system of record.</p>
   <div class="btnrow" style="margin-top:0">
     <button class="btn-ghost" id="loadQueueBtn">Refresh queue</button>
     <a href="https://docs.google.com/spreadsheets/d/1sBLuBJEPAFnpNxxuwiJQI-Um80LU6QfG8z4VUmEoPvk/edit?gid=295723216" target="_blank" rel="noopener" style="font-family:'Inter',sans-serif;font-weight:600;font-size:.95rem;color:var(--accent-ink);text-decoration:none;border:1px solid var(--lift);border-radius:10px;padding:12px 24px">Open tracker sheet</a>
@@ -256,7 +256,6 @@ $('startBtn').onclick = async () => {
 
 /* QUEUE */
 const SHEET_ID = '1sBLuBJEPAFnpNxxuwiJQI-Um80LU6QfG8z4VUmEoPvk';
-const BT_URL = 'https://brightree.net/F1/0271/MedFocus/Patient/frmPatientSummary.aspx?PatientKey=';
 const SHEET_GID = '295723216';
 let qrows = []; // {name, date, done, result}
 
@@ -273,38 +272,17 @@ async function loadQueue(){
     const grid = json.table.rows.map(row=>(row.c||[]).map(c=>c?String(c.f ?? c.v ?? '').trim():''));
 
     /* find the header row anywhere in the sheet */
-    let nameIdx=-1, dateIdx=-1, provIdx=-1, idIdx=-1, headerRow=-1;
+    let nameIdx=-1, dateIdx=-1, provIdx=-1, headerRow=-1;
     for(let ri=0; ri<Math.min(grid.length,30); ri++){
       const ci = grid[ri].findIndex(v=>/patient\s*full\s*name/i.test(v));
       if(ci>=0){ headerRow=ri; nameIdx=ci;
         const di = grid[ri].findIndex(v=>/create\s*date/i.test(v));
         dateIdx = di>=0?di:ci+1;
         provIdx = grid[ri].findIndex(v=>/ordering|provider|doctor|physician|referr/i.test(v));
-        idIdx = grid[ri].findIndex(v=>/patient\s*(id|key|#)|\bpt\s*id\b|^id$/i.test(v));
         break; }
     }
     if(headerRow<0) throw new Error('header not found');
 
-    /* header text missing or renamed: find a column of 3-8 digit ids */
-    if(idIdx<0){
-      const body = grid.slice(headerRow+1, headerRow+40);
-      const width = Math.max(...body.map(r=>r.length), 0);
-      let best=-1, bestScore=0;
-      for(let c=0;c<width;c++){
-        if(c===nameIdx||c===dateIdx||c===provIdx) continue;
-        let hits=0, tot=0;
-        for(const row of body){
-          const v=String(row[c]||'').trim();
-          if(!v) continue;
-          tot++;
-          if(/^[0-9]{3,8}$/.test(v.replace(/,/g,''))) hits++;
-        }
-        if(tot>=3 && hits/tot>0.8 && hits>bestScore){ bestScore=hits; best=c; }
-      }
-      if(best>=0) idIdx=best;
-    }
-    /* Patient ID lives in column N of the pull; use it when nothing else matched */
-    if(idIdx<0) idIdx = 13;
 
     /* action columns on the header row mark a patient as worked in the sheet */
     const hdr = grid[headerRow];
@@ -314,8 +292,7 @@ async function loadQueue(){
         const sheetDone = actIdx.some(i=>String(row[i]||'').trim()!=='');
         const prov = provIdx>=0 ? (row[provIdx]||'') : '';
         if(prov) provSeen(prov);
-        const pid = idIdx>=0 ? String(row[idIdx]||'').replace(/[^0-9]/g,'') : '';
-        return {name:row[nameIdx]||'', date:(dateIdx>=0?row[dateIdx]:'')||'', provider:prov, pid, done:false, sheetDone, result:''};
+        return {name:row[nameIdx]||'', date:(dateIdx>=0?row[dateIdx]:'')||'', provider:prov, done:false, sheetDone, result:''};
       })
       .filter(r=>r.name);
     /* restore this machine's local checkmarks */
@@ -328,10 +305,8 @@ async function loadQueue(){
     const newest = qrows.length?qrows[0].date:'';
     const nNew = qrows.filter(r=>r.date===newest).length;
     renderQueue2();
-    const withId = qrows.filter(q=>q.pid).length;
     renderQueue2();
     loadProviders();
-    if(!withId) $('queueMsg').textContent += ' No Patient ID column detected, so Brightree links are off.';
   }catch(e){
     $('queueMsg').textContent = 'Could not reach the sheet (it may be private). Use the paste option below.';
   }
@@ -411,9 +386,7 @@ function renderQueue2(){
       : (q.result?`<span class="v ${q.result==='YES'?'v-EL':q.result==='CGM'?'v-LI':'v-NO'}">${q.result==='YES'?'YES':q.result==='CGM'?'ALREADY ON CGM':'NOT A CANDIDATE'}</span>`:'<span class="mono">pending</span>');
     return `<tr style="${(isDone(q)||excl)?'opacity:.45':''}">
     <td><input type="checkbox" ${isDone(q)?'checked':''} ${(q.sheetDone||excl)?`disabled title="${excl?'Provider excluded':'Marked worked in the sheet'}"`:''} onchange="markDone(${i},this.checked)" aria-label="Mark ${esc(q.name)} worked"></td>
-    <td class="nm">${(q.pid && !excl)
-      ? `<a href="${BT_URL}${q.pid}&Edit=0&ShowAck=1" target="_blank" rel="noopener" style="color:var(--accent-ink);text-decoration:none;border-bottom:1px solid var(--lift)" title="Open in Brightree">${esc(q.name)}</a>`
-      : esc(q.name)}</td>
+    <td class="nm">${esc(q.name)}</td>
     <td class="mono">${esc(q.date)}</td>
     <td>${resultCell}</td>
     <td>${excl?'':`<button class="btn-ghost rowbtn" onclick="copyName(${i}, this)">Copy name</button>`}</td>
