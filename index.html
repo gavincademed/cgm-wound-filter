@@ -190,7 +190,7 @@
 
 <section class="card hide" id="mgmtCard">
   <h2>Provider management</h2>
-  <p class="hint">Choose which providers are included. Patients whose chart provider is excluded still get screened, but no form is generated and the row says excluded. New providers found in charts appear here automatically as included. Choices are remembered on this machine.</p>
+  <p class="hint">Every provider found in the data pull is listed alphabetically. Click Exclude to remove one: their patients stay visible in the queue but gray out, cannot be checked, and never generate a form. Click Include to bring one back. New providers from the sheet or from screened charts appear automatically as included. Choices are remembered on this machine.</p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">Included</h3>
   <ul class="filelist" id="provIncluded"></ul>
   <h3 style="font-size:.95rem;margin:20px 0 6px;color:var(--ink-soft)">Excluded</h3>
@@ -272,12 +272,14 @@ async function loadQueue(){
     const grid = json.table.rows.map(row=>(row.c||[]).map(c=>c?String(c.f ?? c.v ?? '').trim():''));
 
     /* find the header row anywhere in the sheet */
-    let nameIdx=-1, dateIdx=-1, headerRow=-1;
+    let nameIdx=-1, dateIdx=-1, provIdx=-1, headerRow=-1;
     for(let ri=0; ri<Math.min(grid.length,30); ri++){
       const ci = grid[ri].findIndex(v=>/patient\s*full\s*name/i.test(v));
       if(ci>=0){ headerRow=ri; nameIdx=ci;
         const di = grid[ri].findIndex(v=>/create\s*date/i.test(v));
-        dateIdx = di>=0?di:ci+1; break; }
+        dateIdx = di>=0?di:ci+1;
+        provIdx = grid[ri].findIndex(v=>/provider|doctor|physician|referr/i.test(v));
+        break; }
     }
     if(headerRow<0) throw new Error('header not found');
 
@@ -287,7 +289,9 @@ async function loadQueue(){
     qrows = grid.slice(headerRow+1)
       .map(row=>{
         const sheetDone = actIdx.some(i=>String(row[i]||'').trim()!=='');
-        return {name:row[nameIdx]||'', date:(dateIdx>=0?row[dateIdx]:'')||'', done:false, sheetDone, result:''};
+        const prov = provIdx>=0 ? (row[provIdx]||'') : '';
+        if(prov) provSeen(prov);
+        return {name:row[nameIdx]||'', date:(dateIdx>=0?row[dateIdx]:'')||'', provider:prov, done:false, sheetDone, result:''};
       })
       .filter(r=>r.name);
     /* restore this machine's local checkmarks */
@@ -301,10 +305,55 @@ async function loadQueue(){
     const nNew = qrows.filter(r=>r.date===newest).length;
     renderQueue2();
     renderQueue2();
+    loadProviders();
   }catch(e){
     $('queueMsg').textContent = 'Could not reach the sheet (it may be private). Use the paste option below.';
   }
 }
+/* Discover providers from the other tabs of the same spreadsheet */
+let PATPROV = {}; // normName(patient) -> provider display name
+async function loadProviders(){
+  const sheets = ['Wound Orders','Data','Patients'];
+  for(const s of sheets){
+    try{
+      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(s)}`;
+      const resp = await fetch(url);
+      if(!resp.ok) continue;
+      const txt = await resp.text();
+      const json = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}')+1));
+      const grid = json.table.rows.map(row=>(row.c||[]).map(c=>c?String(c.f ?? c.v ?? '').trim():''));
+      /* find a header row with a provider-ish column */
+      let hRow=-1, pIdx=-1, nIdx=-1;
+      for(let ri=0; ri<Math.min(grid.length,30); ri++){
+        const pi = grid[ri].findIndex(v=>/provider|physician|doctor|referr/i.test(v));
+        if(pi>=0){ hRow=ri; pIdx=pi;
+          nIdx = grid[ri].findIndex(v=>/patient/i.test(v));
+          if(nIdx<0) nIdx = grid[ri].findIndex(v=>/name/i.test(v));
+          break; }
+      }
+      if(hRow<0) continue;
+      for(const row of grid.slice(hRow+1)){
+        const prov = row[pIdx]||'';
+        if(!prov || /provider|physician|doctor/i.test(prov)) continue;
+        provSeen(prov);
+        if(nIdx>=0 && row[nIdx]) PATPROV[normName(row[nIdx])] = prov;
+      }
+    }catch(e){ /* tab missing or renamed: skip quietly */ }
+  }
+  /* stamp providers onto queue rows and refresh views */
+  qrows.forEach(q=>{
+    if(!q.provider){
+      const key = normName(q.name);
+      if(PATPROV[key]) q.provider = PATPROV[key];
+      else {
+        /* loose match for middle-name and suffix differences */
+        for(const k in PATPROV){ if(k.includes(key)||key.includes(k)){ q.provider = PATPROV[k]; break; } }
+      }
+    }
+  });
+  renderProv(); renderQueue2();
+}
+
 $('loadQueueBtn').onclick = loadQueue;
 
 $('queuePasteBtn').onclick = () => {
@@ -325,16 +374,21 @@ window.markDone = (i,checked)=>{ qrows[i].done=checked; saveDone(); renderQueue2
 function renderQueue2(){
   $('queueTable').classList.toggle('hide', !qrows.length);
   const isDone = q => q.done || q.sheetDone;
-  const open = qrows.filter(q=>!isDone(q)).length;
-  const workedN = qrows.length - open;
+  const isExcl = q => q.provider && !provIncluded(q.provider);
+  const open = qrows.filter(q=>!isDone(q) && !isExcl(q)).length;
+  const workedN = qrows.filter(q=>isDone(q)).length;
   $('queueBody').innerHTML = qrows.map((q,i)=>{
     if(isDone(q) && !showWorked) return '';
-    return `<tr style="${isDone(q)?'opacity:.45':''}">
-    <td><input type="checkbox" ${isDone(q)?'checked':''} ${q.sheetDone?'disabled title="Marked worked in the sheet"':''} onchange="markDone(${i},this.checked)" aria-label="Mark ${esc(q.name)} worked"></td>
+    const excl = isExcl(q);
+    const resultCell = excl
+      ? `<span class="v v-WA">PROVIDER EXCLUDED</span><br><span class="mono">${esc(q.provider)}</span>`
+      : (q.result?`<span class="v ${q.result==='YES'?'v-EL':q.result==='CGM'?'v-LI':'v-NO'}">${q.result==='YES'?'YES':q.result==='CGM'?'ALREADY ON CGM':'NOT A CANDIDATE'}</span>`:'<span class="mono">pending</span>');
+    return `<tr style="${(isDone(q)||excl)?'opacity:.45':''}">
+    <td><input type="checkbox" ${isDone(q)?'checked':''} ${(q.sheetDone||excl)?`disabled title="${excl?'Provider excluded':'Marked worked in the sheet'}"`:''} onchange="markDone(${i},this.checked)" aria-label="Mark ${esc(q.name)} worked"></td>
     <td class="nm">${esc(q.name)}</td>
     <td class="mono">${esc(q.date)}</td>
-    <td>${q.result?`<span class="v ${q.result==='YES'?'v-EL':q.result==='CGM'?'v-LI':'v-NO'}">${q.result==='YES'?'YES':q.result==='CGM'?'ALREADY ON CGM':'NOT A CANDIDATE'}</span>`:'<span class="mono">pending</span>'}</td>
-    <td><button class="btn-ghost rowbtn" onclick="copyName(${i}, this)">Copy name</button></td>
+    <td>${resultCell}</td>
+    <td>${excl?'':`<button class="btn-ghost rowbtn" onclick="copyName(${i}, this)">Copy name</button>`}</td>
   </tr>`;}).join('')
   + (workedN?`<tr><td colspan="5" style="padding:14px 10px"><button class="btn-ghost rowbtn" onclick="toggleWorked()">${showWorked?'Hide':'Show'} worked (${workedN})</button></td></tr>`:'');
   const el = $('queueMsg');
@@ -370,6 +424,7 @@ function tagQueue(result){
     const qn = normName(q.name);
     if(qn && (qn.includes(rn) || rn.includes(qn))){
       q.result = result.verdict==='ON_CGM' ? 'CGM' : ((result.verdict==='ELIGIBLE'||result.verdict==='LIKELY') ? 'YES' : 'NO');
+      if(result.provider_name) q.provider = result.provider_name;
     }
   }
   renderQueue2();
@@ -521,8 +576,8 @@ function provIncluded(name){
   if(!k) return true;             /* no provider found on chart: do not block */
   return PROV[k] ? PROV[k].included : true;
 }
-window.provToggle = k => { PROV[k].included = !PROV[k].included; provSave(); renderProv(); renderResults(); };
-window.provRemove = k => { delete PROV[k]; provSave(); renderProv(); renderResults(); };
+window.provToggle = k => { PROV[k].included = !PROV[k].included; provSave(); renderProv(); renderResults(); renderQueue2(); };
+window.provRemove = k => { delete PROV[k]; provSave(); renderProv(); renderResults(); renderQueue2(); };
 function renderProv(){
   const entries = Object.entries(PROV).sort((a,b)=>a[1].name.localeCompare(b[1].name));
   const row = ([k,v]) => `<li><span>${esc(v.name)}</span>
