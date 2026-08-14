@@ -133,7 +133,7 @@
 <div class="workgrid">
 <section class="card hide" id="queueCard">
   <h2>Today's queue</h2>
-  <p class="hint">The prior day's new wound patients, pulled live from the tracker sheet. Look each one up in Brightree, pull their notes, and drop them below. Rows already marked in the sheet (Eligible or any PDF column filled) drop out of the list automatically. The checkbox holds your place during the day and is remembered on this machine; the sheet stays the system of record.</p>
+  <p class="hint">The prior day's new wound patients, pulled live from the tracker sheet. Click Open in Brightree to jump straight to the patient, pull their notes, and drop them below. Rows already marked in the sheet (Eligible or any PDF column filled) drop out of the list automatically. The checkbox holds your place during the day and is remembered on this machine; the sheet stays the system of record.</p>
   <div class="btnrow" style="margin-top:0">
     <button class="btn-ghost" id="loadQueueBtn">Refresh queue</button>
     <a href="https://docs.google.com/spreadsheets/d/1sBLuBJEPAFnpNxxuwiJQI-Um80LU6QfG8z4VUmEoPvk/edit?gid=295723216" target="_blank" rel="noopener" style="font-family:'Inter',sans-serif;font-weight:600;font-size:.95rem;color:var(--accent-ink);text-decoration:none;border:1px solid var(--lift);border-radius:10px;padding:12px 24px">Open tracker sheet</a>
@@ -256,6 +256,7 @@ $('startBtn').onclick = async () => {
 
 /* QUEUE */
 const SHEET_ID = '1sBLuBJEPAFnpNxxuwiJQI-Um80LU6QfG8z4VUmEoPvk';
+const BT_URL = 'https://brightree.net/F1/0271/MedFocus/Patient/frmPatientSummary.aspx?PatientKey=';
 const SHEET_GID = '295723216';
 let qrows = []; // {name, date, done, result}
 
@@ -272,13 +273,14 @@ async function loadQueue(){
     const grid = json.table.rows.map(row=>(row.c||[]).map(c=>c?String(c.f ?? c.v ?? '').trim():''));
 
     /* find the header row anywhere in the sheet */
-    let nameIdx=-1, dateIdx=-1, provIdx=-1, headerRow=-1;
+    let nameIdx=-1, dateIdx=-1, provIdx=-1, idIdx=-1, headerRow=-1;
     for(let ri=0; ri<Math.min(grid.length,30); ri++){
       const ci = grid[ri].findIndex(v=>/patient\s*full\s*name/i.test(v));
       if(ci>=0){ headerRow=ri; nameIdx=ci;
         const di = grid[ri].findIndex(v=>/create\s*date/i.test(v));
         dateIdx = di>=0?di:ci+1;
         provIdx = grid[ri].findIndex(v=>/ordering|provider|doctor|physician|referr/i.test(v));
+        idIdx = grid[ri].findIndex(v=>/patient\s*id|patient\s*key/i.test(v));
         break; }
     }
     if(headerRow<0) throw new Error('header not found');
@@ -291,7 +293,8 @@ async function loadQueue(){
         const sheetDone = actIdx.some(i=>String(row[i]||'').trim()!=='');
         const prov = provIdx>=0 ? (row[provIdx]||'') : '';
         if(prov) provSeen(prov);
-        return {name:row[nameIdx]||'', date:(dateIdx>=0?row[dateIdx]:'')||'', provider:prov, done:false, sheetDone, result:''};
+        const pid = idIdx>=0 ? String(row[idIdx]||'').replace(/[^0-9]/g,'') : '';
+        return {name:row[nameIdx]||'', date:(dateIdx>=0?row[dateIdx]:'')||'', provider:prov, pid, done:false, sheetDone, result:''};
       })
       .filter(r=>r.name);
     /* restore this machine's local checkmarks */
@@ -388,7 +391,10 @@ function renderQueue2(){
     <td class="nm">${esc(q.name)}</td>
     <td class="mono">${esc(q.date)}</td>
     <td>${resultCell}</td>
-    <td>${excl?'':`<button class="btn-ghost rowbtn" onclick="copyName(${i}, this)">Copy name</button>`}</td>
+    <td>${excl?'':`<span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      ${q.pid?`<a class="btn-primary rowbtn" style="text-decoration:none;display:inline-block" target="_blank" rel="noopener" href="${BT_URL}${q.pid}&Edit=0&ShowAck=1">Open in Brightree</a>`:''}
+      <button class="btn-ghost rowbtn" onclick="copyName(${i}, this)">Copy name</button>
+    </span>`}</td>
   </tr>`;}).join('')
   + (workedN?`<tr><td colspan="5" style="padding:14px 10px"><button class="btn-ghost rowbtn" onclick="toggleWorked()">${showWorked?'Hide':'Show'} worked (${workedN})</button></td></tr>`:'');
   const el = $('queueMsg');
@@ -808,12 +814,12 @@ async function buildOrderForm(r){
   /* Header */
   const logoImg = await doc.embedPng(Uint8Array.from(atob(LOGO_B64), c=>c.charCodeAt(0)));
   const lw=118, lh=lw*(logoImg.height/logoImg.width);
-  pg.drawImage(logoImg,{x:L,y:y-40-lh,width:lw,height:lh});
+  pg.drawImage(logoImg,{x:L,y:y-26-lh,width:lw,height:lh});
   const rt = (t,dy,f,s,c)=>pg.drawText(t,{x:R-f.widthOfTextAtSize(t,s),y:y-dy,size:s,font:f,color:c});
-  rt('DIABETIC CARE & CGM COORDINATION',44,bold,9.5,blue);
-  rt('Phone: 844.633.6287  |  Fax: 808.356.0309',58,helv,9,gray);
-  rt('cademed.com  ·  Serving the Hawaiian Islands',71,helv,9,gray);
-  y-=98;
+  rt('DIABETIC CARE & CGM COORDINATION',34,bold,9.5,blue);
+  rt('Phone: 844.633.6287  |  Fax: 808.356.0309',48,helv,9,gray);
+  rt('cademed.com  ·  Serving the Hawaiian Islands',61,helv,9,gray);
+  y-=104;
 
   pg.drawText('WOUND SPECIALIST CGM RECOMMENDATION',{x:L,y:y,size:18.5,font:bold,color:dark});
   y-=22;
@@ -856,7 +862,7 @@ async function buildOrderForm(r){
     used=Math.max(used,cb(L, y, leftOpts[i], r.indication===leftOpts[i]));
     const isOther = rightOpts[i]==='Other:';
     used=Math.max(used,cb(L+266, y, rightOpts[i], isOther ? r.indication==='Other' : r.indication===rightOpts[i]));
-    y-=12*used+7;
+    y-=12*used+9;
   }
   /* banner */
   pg.drawRectangle({x:L,y:y-6,width:R-L,height:22,color:light});
@@ -865,7 +871,7 @@ async function buildOrderForm(r){
   pg.drawText('Patient is ',{x:bx,y:y,size:10,font:helv,color:dark}); bx+=helv.widthOfTextAtSize('Patient is ',10);
   pg.drawText('not',{x:bx,y:y,size:10,font:bold,color:dark}); bx+=bold.widthOfTextAtSize('not',10);
   pg.drawText(' currently utilizing a Continuous Glucose Monitor',{x:bx,y:y,size:10,font:helv,color:dark});
-  y-=36;
+  y-=46;
 
   /* Section 3 */
   section(3,'PROVIDER RECOMMENDATION',blue);
@@ -892,15 +898,15 @@ async function buildOrderForm(r){
   y-=40;
 
   /* Why refer box */
-  const boxH=96;
+  const boxH=88;
   pg.drawRectangle({x:L,y:y-boxH,width:R-L,height:boxH,borderColor:rgb(.85,.87,.9),borderWidth:1,color:rgb(1,1,1)});
   pg.drawRectangle({x:L,y:y-boxH,width:3,height:boxH,color:blue});
   pg.drawText('WHY REFER CGM EVALUATION TO CADE',{x:L+14,y:y-20,size:8.5,font:bold,color:aqua});
   const body='CADE Medical supplies both major CGM platforms, including the current-generation Abbott FreeStyle Libre and Dexcom G7 systems, so the diabetes-managing provider can order the sensor that fits the patient rather than the one a supplier happens to carry. CADE will verify benefits, handle authorization, coordinate directly with the ordering provider, and handle the documentation on the patient\u2019s behalf.';
   wrap(body,helv,9,352).forEach((ln,k)=>pg.drawText(ln,{x:L+14,y:y-36-k*12,size:9,font:helv,color:dark}));
-  if(LIBRE_B64){ const im=await doc.embedPng(Uint8Array.from(atob(LIBRE_B64),c=>c.charCodeAt(0))); const w2=92,h2=w2*(im.height/im.width); pg.drawImage(im,{x:R-110,y:y-28-h2,width:w2,height:h2}); }
+    if(LIBRE_B64){ const im=await doc.embedPng(Uint8Array.from(atob(LIBRE_B64),c=>c.charCodeAt(0))); const w2=80,h2=w2*(im.height/im.width); pg.drawImage(im,{x:R-102,y:y-18-h2,width:w2,height:h2}); }
   else pg.drawText('FreeStyle Libre',{x:R-108,y:y-36,size:11,font:bold,color:dark});
-  if(DEXCOM_B64){ const im=await doc.embedPng(Uint8Array.from(atob(DEXCOM_B64),c=>c.charCodeAt(0))); const w2=92,h2=w2*(im.height/im.width); pg.drawImage(im,{x:R-110,y:y-64-h2,width:w2,height:h2}); }
+    if(DEXCOM_B64){ const im=await doc.embedPng(Uint8Array.from(atob(DEXCOM_B64),c=>c.charCodeAt(0))); const w2=88,h2=w2*(im.height/im.width); pg.drawImage(im,{x:R-106,y:y-boxH+18,width:w2,height:h2}); }
   else pg.drawText('Dexcom G7',{x:R-108,y:y-72,size:11,font:bold,color:rgb(0.29,0.63,0.20)});
   y-=boxH;
 
