@@ -548,6 +548,7 @@ $('screenBtn').onclick = async () => {
     $('prog').textContent = `Screening ${done+1} of ${todo.length}`;
     try{
       const r = await screenFile(item);
+      if(!String(r.provider_name||'').trim()) r.provider_name = providerForPatient(r.patient_name);
       provSeen(r.provider_name);
       results.push(r);
       item.status = r.verdict;
@@ -761,6 +762,7 @@ $('formsBtn').onclick = async () => {
 };
 
 async function buildOrderForm(r){
+  if(!String(r.provider_name||'').trim()) r.provider_name = providerForPatient(r.patient_name);
   const {PDFDocument, StandardFonts, rgb} = PDFLib;
   const doc = await PDFDocument.create();
   const pg = doc.addPage([612,792]);
